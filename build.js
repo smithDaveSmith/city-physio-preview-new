@@ -40,9 +40,22 @@ function esc(s = '') {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+// Depth of the page currently being generated, counted in path segments.
+// Set by emit() before each page so url() can return a relative path.
+let DEPTH = 0;
+let ABSOLUTE = false; // 404.html must use absolute paths — see emit()
+
 function url(p) {
   if (/^(https?:|mailto:|tel:|#)/.test(p)) return p;
-  return (BASE + (p.startsWith('/') ? p : '/' + p)) || '/';
+  const clean = p.startsWith('/') ? p.slice(1) : p;
+
+  // 404.html is served for arbitrary missing paths, so relative links from it
+  // would resolve against the requested URL rather than the file's location.
+  if (ABSOLUTE) return (BASE + '/' + clean).replace(/\/+$/, '/') || '/';
+
+  // Relative: the site is portable to any base path with no rebuild.
+  const prefix = DEPTH === 0 ? './' : '../'.repeat(DEPTH);
+  return clean === '' ? prefix : prefix + clean;
 }
 
 /* ---------------------------------------------------------------- paths -- */
@@ -1295,6 +1308,13 @@ function write(routePath, html) {
   fs.writeFileSync(path.join(dir, 'index.html'), html);
 }
 
+// Generate a page with DEPTH set from its route, so url() resolves correctly.
+function emit(routePath, generate) {
+  DEPTH = routePath === '/' ? 0 : routePath.replace(/^\/|\/$/g, '').split('/').length;
+  write(routePath, generate());
+  DEPTH = 0;
+}
+
 function copyDir(from, to) {
   fs.mkdirSync(to, { recursive: true });
   for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
@@ -1309,29 +1329,33 @@ function build() {
   fs.mkdirSync(OUT, { recursive: true });
 
   let n = 0;
-  write('/', homePage()); n++;
-  write(PATHS.symptoms, symptomsPage()); n++;
-  REGIONS.forEach((r, i) => { write(PATHS.region(r.slug), regionPage(r, i)); n++; });
-  write(PATHS.services, servicesPage()); n++;
-  SERVICES.forEach(s => { write(PATHS.service(s.slug), servicePage(s)); n++; });
-  write(PATHS.approach, approachPage()); n++;
-  write(PATHS.about, aboutPage()); n++;
-  write(PATHS.contact, contactPage()); n++;
-  write(PATHS.bookings, bookingsPage()); n++;
-  write(PATHS.pilates, pilatesPage()); n++;
-  write(PATHS.downloads, downloadsPage()); n++;
-  write(PATHS.blog, blogPage()); n++;
-  write(PATHS.privacy, legalPage('Privacy & Cookies Policy', PATHS.privacy,
+  emit('/', homePage); n++;
+  emit(PATHS.symptoms, symptomsPage); n++;
+  REGIONS.forEach((r, i) => { emit(PATHS.region(r.slug), () => regionPage(r, i)); n++; });
+  emit(PATHS.services, servicesPage); n++;
+  SERVICES.forEach(s => { emit(PATHS.service(s.slug), () => servicePage(s)); n++; });
+  emit(PATHS.approach, approachPage); n++;
+  emit(PATHS.about, aboutPage); n++;
+  emit(PATHS.contact, contactPage); n++;
+  emit(PATHS.bookings, bookingsPage); n++;
+  emit(PATHS.pilates, pilatesPage); n++;
+  emit(PATHS.downloads, downloadsPage); n++;
+  emit(PATHS.blog, blogPage); n++;
+  emit(PATHS.privacy, () => legalPage('Privacy & Cookies Policy', PATHS.privacy,
     'https://www.cityphysio.ie/privacy-cookies-policy',
     'How CityPhysio collects, uses and protects your personal information.')); n++;
-  write(PATHS.safeguarding, legalPage('Child Safeguarding Statement', PATHS.safeguarding,
+  emit(PATHS.safeguarding, () => legalPage('Child Safeguarding Statement', PATHS.safeguarding,
     'https://www.cityphysio.ie/child-safeguarding-statement',
     'Our commitment to the safety and welfare of children attending the clinic.')); n++;
-  write(PATHS.patientPrivacy, legalPage('Patient Privacy Consent', PATHS.patientPrivacy,
+  emit(PATHS.patientPrivacy, () => legalPage('Patient Privacy Consent', PATHS.patientPrivacy,
     'https://www.cityphysio.ie/patient-privacy-document',
     'How your clinical records are held and used.')); n++;
 
-  fs.writeFileSync(path.join(OUT, '404.html'), notFoundPage()); n++;
+  // 404 is served from arbitrary paths, so it alone needs absolute URLs.
+  ABSOLUTE = true;
+  fs.writeFileSync(path.join(OUT, '404.html'), notFoundPage());
+  ABSOLUTE = false;
+  n++;
 
   // GitHub Pages: skip Jekyll processing
   fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
@@ -1341,7 +1365,7 @@ function build() {
 
   copyDir(path.join(ROOT, 'assets'), path.join(OUT, 'assets'));
 
-  console.log(`Built ${n} pages into docs/${BASE ? `  (base: ${BASE})` : ''}`);
+  console.log(`Built ${n} pages into docs/ — relative paths, portable to any base${BASE ? ` (404.html uses ${BASE})` : ''}`);
   console.log(`  ${REGIONS.length} symptom regions, ${SERVICES.length} services, ${TEAM.length} team members`);
 }
 
